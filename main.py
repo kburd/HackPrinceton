@@ -12,10 +12,17 @@ import picamera.array
 import cv2
 import numpy as np
 import matplotlib.pyplot as pt
+import RPi.GPIO as GPIO
+
+#JReynoldsUD
+#FarSightWalker1
 
 ##Auto correct
-ser = serial.Serial("/dev/ttyACM0",9600,timeout = 1)
+ser = serial.Serial("/dev/ttyACM1",9600,timeout = 1)
 camera = picamera.PiCamera()
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(17, GPIO.IN)
+GPIO.setup(27, GPIO.OUT, initial=GPIO.LOW)
 
 def getGPSLocation():
     send_url = 'http://freegeoip.net/json'
@@ -23,41 +30,64 @@ def getGPSLocation():
     j = json.loads(r.text)
     lat = j['latitude']
     lon = j['longitude']
-    return lat,lon
 
-def emailAlert():
-    fromaddr = "farsightsafety@gmail.com"
-    toaddr = "kburd@udel.edu"
-     
-    msg = MIMEMultipart()
-     
-    msg['From'] = fromaddr
-    msg['To'] = toaddr
-    msg['Subject'] = "Safety Alert!"
+    link = "https://www.google.com/maps/?q="+str(lat)+","+str(lon)
+    
+    return link
 
-    lat,lon = getGPSLocation() 
-    body = "The Far Sight Walker has detected a potential issue with your Loved One, Kaleb M Burd. There last known GPS Coordinates are:\nLatitude: %f\nLongitude: %f\nBelow is the last picture taken. Feel free to reach out to us for more information"%(lat,lon)
-    msg.attach(MIMEText(body, 'plain'))
-     
-    filename = "image.jpg"
-    takeImage(filename)
-    attachment = open(filename, "rb")
-     
-    part = MIMEBase('application', 'octet-stream')
-    part.set_payload((attachment).read())
-    encoders.encode_base64(part)
-    part.add_header('Content-Disposition', "attachment; filename= %s" % filename)
-     
-    msg.attach(part)
-     
-    server = smtplib.SMTP('smtp.gmail.com', 587)
-    server.starttls()
-    server.login(fromaddr, "SafetySightFar")
-    text = msg.as_string()
-    server.sendmail(fromaddr, toaddr, text)
-    server.quit()
+def emailAlert(alertType):
+
+    emailList = ["kburd@udel.edu", "vvazir@udel.edu", "jkr@udel.edu"]
+
+    for toaddr in emailList:
+    
+        fromaddr = "farsightsafety@gmail.com"
+         
+        msg = MIMEMultipart()
+         
+        msg['From'] = fromaddr
+        msg['To'] = toaddr
+        msg['Subject'] = "Safety Alert!"
+
+        if(alertType == "F"):
+            insert = "We have detected a potential fall."
+        elif(alertType == "W"):
+            insert = "We have detected that they may be in distress."
+        elif(alertType == "P"):
+            insert = "We do not currently detect them with the walk."
+
+        body = "The FarSight Walker has detected a potential issue with your Loved One, Kaleb M Burd. " + insert + " There last known GPS Location and the last picture taken are listed below. Feel free to reach out to us for more information\n\n" + getGPSLocation() 
+        msg.attach(MIMEText(body, 'plain'))
+         
+        filename = "image.jpg"
+        takeImage(filename)
+        attachment = open(filename, "rb")
+         
+        part = MIMEBase('application', 'octet-stream')
+        part.set_payload((attachment).read())
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', "attachment; filename= %s" % filename)
+         
+        msg.attach(part)
+         
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(fromaddr, "SafetySightFar")
+        text = msg.as_string()
+        server.sendmail(fromaddr, toaddr, text)
+        server.quit()
+
+def killLazers():
+    
+    GPIO.output(27, GPIO.LOW)
+
+def startLazers():
+
+    GPIO.output(27, GPIO.HIGH)
 
 def personFinder():
+
+    startLazers()
     
     with picamera.array.PiRGBArray(camera) as stream:
         
@@ -70,6 +100,8 @@ def personFinder():
         upper_red = np.array([255,255,255])
         
         mask = cv2.inRange(hsv, lower_red, upper_red)
+
+    killLazers()
 
     height = len(image)
     width = len(image[0])
@@ -114,23 +146,24 @@ def readSerial():
     while ser.in_waiting:
         read = ser.read()
         return read
+
+def readSwitch():
+    return GPIO.input(17)
     
 def main():
-    previousCall = None
     while True:
         x= readSerial()
-        if (x is not None): # and x != previousCall):
+        if (x is not None and readSwitch() == 1):
             print(x)
             if(x == "F"):
-                emailAlert()
+                emailAlert(x)
             elif(x == "W"):
-                emailAlert()
+                emailAlert(x)
             elif(x == "P"):
                 personFound = personFinder()
                 if(personFound == 0):
-                    emailAlert()
+                    emailAlert(x)
             print("Done")
-        previousCall = x
 
 main()
     
